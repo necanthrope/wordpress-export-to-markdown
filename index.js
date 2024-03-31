@@ -12,10 +12,10 @@ const writer = require('./src/writer');
 	const config = await wizard.getConfig(process.argv);
 
 	// parse data from XML and do Markdown translations
-	const posts = await parser.parseFilePromise(config)
+	[posts, comments] = await parser.parseFilePromise(config)
 
 	// write files, downloading images as needed
-	await writer.writeFilesPromise(posts, config);
+	await writer.writeFilesPromise(posts, comments, config);
 
 	// happy goodbye
 	console.log('\nAll done!');

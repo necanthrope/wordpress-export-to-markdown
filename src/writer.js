@@ -7,9 +7,10 @@ const requestPromiseNative = require('request-promise-native');
 const shared = require('./shared');
 const settings = require('./settings');
 
-async function writeFilesPromise(posts, config) {
+async function writeFilesPromise(posts, comments, config) {
 	await writeMarkdownFilesPromise(posts, config);
 	await writeImageFilesPromise(posts, config);
+	await writeCommentMarkdownFilesPromise(comments, config);
 }
 
 async function processPayloadsPromise(payloads, loadFunc) {
@@ -46,7 +47,7 @@ async function writeMarkdownFilesPromise(posts, config) {
 	let skipCount = 0;
 	let delay = 0;
 	const payloads = posts.flatMap(post => {
-		const destinationPath = getPostPath(post, config);
+		const destinationPath = getPostPath(post, "post",  config);
 		if (checkFile(destinationPath)) {
 			// already exists, don't need to save again
 			skipCount++;
@@ -55,6 +56,7 @@ async function writeMarkdownFilesPromise(posts, config) {
 			const payload = {
 				item: post,
 				name: (config.includeOtherTypes ? post.meta.type + ' - ' : '') + post.meta.slug,
+				id: post.meta.id,
 				destinationPath,
 				delay
 			};
@@ -68,6 +70,37 @@ async function writeMarkdownFilesPromise(posts, config) {
 		console.log('\nNo posts to save...');
 	} else {
 		console.log(`\nSaving ${remainingCount} posts (${skipCount} already exist)...`);
+		await processPayloadsPromise(payloads, loadMarkdownFilePromise);
+	}
+}
+
+async function writeCommentMarkdownFilesPromise(comments, config) {
+	// package up comments into payloads
+	let skipCount = 0;
+	let delay = 0;
+	const payloads = comments.flatMap(comment => {
+		const destinationPath = getPostPath(comment, comment.data.comment_type, config);
+		if (checkFile(destinationPath)) {
+			// already exists, don't need to save again
+			skipCount++;
+			return [];
+		} else {
+			const payload = {
+				item: comment,
+				name: (comment.data.comment_type + " - " + comment.content.slice(0, 20)),
+				destinationPath,
+				delay
+			};
+			delay += settings.markdown_file_write_delay;
+			return [payload];
+		}
+	});
+
+	const remainingCount = payloads.length;
+	if (remainingCount + skipCount === 0) {
+		console.log('\nNo comments to save...');
+	} else {
+		console.log(`\nSaving ${remainingCount} comments (${skipCount} already exist)...`);
 		await processPayloadsPromise(payloads, loadMarkdownFilePromise);
 	}
 }
@@ -104,7 +137,7 @@ async function writeImageFilesPromise(posts, config) {
 	let skipCount = 0;
 	let delay = 0;
 	const payloads = posts.flatMap(post => {
-		const postPath = getPostPath(post, config);
+		const postPath = getPostPath(post, "post", config);
 		const imagesDir = path.join(path.dirname(postPath), 'images');
 		return post.meta.imageUrls.flatMap(imageUrl => {
 			const filename = shared.getFilenameFromUrl(imageUrl);
@@ -159,20 +192,40 @@ async function loadImageFilePromise(imageUrl) {
 	return buffer;
 }
 
-function getPostPath(post, config) {
+function getPostPath(post, type, config) {
 	let dt;
-	if (settings.custom_date_formatting) {
-		dt = luxon.DateTime.fromFormat(post.frontmatter.date, settings.custom_date_formatting);
-	} else {
-		dt = luxon.DateTime.fromISO(post.frontmatter.date);
-	}
 
 	// start with base output dir
 	const pathSegments = [config.output];
 
-	// create segment for post type if we're dealing with more than just "post"
-	if (config.includeOtherTypes) {
-		pathSegments.push(post.meta.type);
+	let slugFragment = null
+
+	if (type === "post") {
+		if (settings.custom_date_formatting) {
+			dt = luxon.DateTime.fromFormat(post.frontmatter.date, settings.custom_date_formatting);
+		} else {
+			dt = luxon.DateTime.fromISO(post.frontmatter.date);
+		}
+
+		slugFragment = post.meta.slug;
+
+		// create segment for post type if we're dealing with more than just "post"
+		if (config.includeOtherTypes) {
+			pathSegments.push(post.meta.type);
+		}
+	} else {
+		if (settings.custom_date_formatting) {
+			dt = luxon.DateTime.fromFormat(post.frontmatter.comment_date, settings.custom_date_formatting);
+		} else {
+			dt = luxon.DateTime.fromISO(post.frontmatter.comment_date);
+		}
+
+		slugFragment = type + "-" + post.data.comment_id;
+
+		// create segment for post type if we're dealing with more than just "post"
+		if (config.includeOtherTypes) {
+			pathSegments.push(post.data.comment_type[0]);
+		}
 	}
 
 	if (config.yearFolders) {
@@ -184,7 +237,6 @@ function getPostPath(post, config) {
 	}
 
 	// create slug fragment, possibly date prefixed
-	let slugFragment = post.meta.slug;
 	if (config.prefixDate) {
 		slugFragment = dt.toFormat('yyyy-LL-dd') + '-' + slugFragment;
 	}
@@ -196,6 +248,7 @@ function getPostPath(post, config) {
 		pathSegments.push(slugFragment + '.md');
 	}
 
+	// console.log(pathSegments)
 	return path.join(...pathSegments);
 }
 

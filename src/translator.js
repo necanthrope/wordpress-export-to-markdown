@@ -125,5 +125,38 @@ function getPostContent(postData, turndownService, config) {
 	return content;
 }
 
+function getCommentContent(comments, turndownService, config) {
+
+	let content = comments.comment_content[0];
+
+	// insert an empty div element between double line breaks
+	// this nifty trick causes turndown to keep adjacent paragraphs separated
+	// without mucking up content inside of other elements (like <code> blocks)
+	content = content.replace(/(\r?\n){2}/g, '\n<div></div>\n');
+
+	if (config.saveScrapedImages) {
+		// writeImageFile() will save all content images to a relative /images
+		// folder so update references in post content to match
+		content = content.replace(/(<img[^>]*src=").*?([^/"]+\.(?:gif|jpe?g|png|webp))("[^>]*>)/gi, '$1images/$2$3');
+	}
+
+	// preserve "more" separator, max one per post, optionally with custom label
+	// by escaping angle brackets (will be unescaped during turndown conversion)
+	content = content.replace(/<(!--more( .*)?--)>/, '&lt;$1&gt;');
+
+	// some WordPress plugins specify a code language in an HTML comment above a
+	// <pre> block, save it to a data attribute so the "pre" rule can use it
+	content = content.replace(/(<!-- wp:.+? \{"language":"(.+?)"\} -->\r?\n<pre )/g, '$1data-wetm-language="$2" ');
+
+	// use turndown to convert HTML to Markdown
+	content = turndownService.turndown(content);
+
+	// clean up extra spaces in list items
+	content = content.replace(/(-|\d+\.) +/g, '$1 ');
+
+	return content;
+}
+
 exports.initTurndownService = initTurndownService;
 exports.getPostContent = getPostContent;
+exports.getCommentContent = getCommentContent;

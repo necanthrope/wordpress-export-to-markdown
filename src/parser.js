@@ -19,7 +19,7 @@ async function parseFilePromise(config) {
 	const channelData = allData.rss.channel[0].item;
 
 	const postTypes = getPostTypes(channelData, config);
-	const posts = collectPosts(channelData, postTypes, config);
+	[posts, comments] = collectPosts(channelData, postTypes, config);
 
 	const images = [];
 	if (config.saveAttachedImages) {
@@ -31,8 +31,9 @@ async function parseFilePromise(config) {
 
 	mergeImagesIntoPosts(images, posts);
 	populateFrontmatter(posts);
+	populateCommentFrontmatter(comments)
 
-	return posts;
+	return [posts, comments];
 }
 
 function getPostTypes(channelData, config) {
@@ -58,6 +59,7 @@ function collectPosts(channelData, postTypes, config) {
 	const turndownService = translator.initTurndownService();
 
 	let allPosts = [];
+	let allComments = [];
 	postTypes.forEach(postType => {
 		const postsForType = getItemsOfType(channelData, postType)
 			.filter(postData => postData.status[0] !== 'trash' && postData.status[0] !== 'draft')
@@ -76,7 +78,9 @@ function collectPosts(channelData, postTypes, config) {
 				},
 
 				// contents of the post in markdown
-				content: translator.getPostContent(postData, turndownService, config)
+				content: translator.getPostContent(postData, turndownService, config),
+
+				comments: collectComments(getPostId(postData), postData.comment, turndownService, allComments, config)
 			}));
 
 		if (postTypes.length > 1) {
@@ -89,7 +93,37 @@ function collectPosts(channelData, postTypes, config) {
 	if (postTypes.length === 1) {
 		console.log(allPosts.length + ' posts found.');
 	}
-	return allPosts;
+
+	const comments = getItemsOfType(channelData, 'comment')
+
+	const allData = [
+		allPosts,
+		allComments
+	]
+	return allData;
+}
+
+function collectComments(postId, commentData, turndownService, allComments, config) {
+
+	if (commentData == null) return null
+
+	if (commentData.length > 1) {
+		console.log(`${commentData.length} comments found.`);
+	}
+
+	commentData.forEach(comment => {
+		if (!settings.accepted_comment_types.includes(comment.comment_type[0])) return
+		comment = {...comment, postId: postId}
+		const commentObj = {
+			data: comment,
+			meta: {
+				id: comment.comment_id[0],
+				postId: postId
+			},
+			content: translator.getCommentContent(comment, turndownService, config)
+		}
+		allComments.push(commentObj)
+	});
 }
 
 function getPostId(postData) {
@@ -186,6 +220,23 @@ function populateFrontmatter(posts) {
 			frontmatter[alias || key] = frontmatterGetter(post);
 		});
 		post.frontmatter = frontmatter;
+	});
+}
+
+function populateCommentFrontmatter(comments) {
+	comments.forEach(comment => {
+		const frontmatter = {};
+		settings.frontmatter_comment_fields.forEach(field => {
+			[key, alias] = field.split(':');
+
+			let frontmatterGetter = frontmatterGetters[key];
+			if (!frontmatterGetter) {
+				throw `Could not find a frontmatter getter named "${key}".`;
+			}
+
+			frontmatter[alias || key] = frontmatterGetter(comment);
+		});
+		comment.frontmatter = frontmatter;
 	});
 }
 
